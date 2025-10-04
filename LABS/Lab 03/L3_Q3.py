@@ -1,5 +1,3 @@
-# filename: knn_analysis.py
-
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -149,3 +147,4 @@ Critical Analysis:
 - Validation set helps tune hyperparameters without touching test set.
 - Always check metrics to choose the most suitable distance for your dataset.
 """)
+
