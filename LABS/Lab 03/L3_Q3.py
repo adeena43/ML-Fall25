@@ -1,102 +1,151 @@
+# filename: knn_analysis.py
+
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import OrdinalEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from sklearn.neighbors import KNeighborsClassifier
-from imblearn.over_sampling import RandomOverSampler
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix
 
-# ------------------- Load Dataset -------------------
-data = pd.read_csv("cancer patient data sets.csv")
+# =========================
+# 1. Load Dataset
+# =========================
+df = pd.read_csv("your_dataset.csv")  # replace with your file path
+print("First 5 rows:")
+print(df.head())
+print("\nData Info:")
+print(df.info())
+print("\nSummary Statistics:")
+print(df.describe())
 
-# A) Exploratory Data Analysis
-print("Initial Data Exploration:")
-print(data.head())
-print(data.info())
-print(data.describe())
+# =========================
+# 2. Check class balance
+# =========================
+print("\nLabel counts:")
+print(df['Label'].value_counts())
+print("\nLabel percentage:")
+print(df['Label'].value_counts(normalize=True))
 
-# B) Data Checks
-class_distribution = data["Level"].value_counts(normalize=True)
-null_values = data.isnull().sum()
-duplicates = data.duplicated().sum()
-categorical_features = data.select_dtypes(include=["object", "category"])
+# =========================
+# 3. Check missing, categorical, duplicate
+# =========================
+print("\nMissing values:")
+print(df.isnull().sum())
 
-print("\nClass Distribution (Level variable):\n", class_distribution)
-print("\nTotal Missing Values:", null_values.sum())
-print("Duplicate Rows:", duplicates)
-print("\nCategorical Columns:\n", categorical_features)
+print("\nCategorical features:")
+print(df.select_dtypes(include='object').columns)
 
-# Dataset is already clean -> no nulls, no duplicates.
-# Patient ID and index are identifiers, so they can be removed.
-# Target column "Level" needs encoding since it is categorical.
-# Class distribution looks nearly balanced (minor difference only).
-data = data.drop(['Patient Id', 'index'], axis=1)
+print("\nDuplicate rows:")
+print(df.duplicated().sum())
 
-# Encode target labels (Low, Medium, High → 0,1,2)
-label_encoder = OrdinalEncoder(categories=[["Low", "Medium", "High"]])
-data["Level"] = label_encoder.fit_transform(data[["Level"]])
+# Handling missing values (if any)
+for col in df.columns:
+    if df[col].isnull().sum() > 0:
+        if df[col].dtype == 'object':
+            df[col].fillna(df[col].mode()[0], inplace=True)  # categorical → mode
+        else:
+            df[col].fillna(df[col].median(), inplace=True)    # numeric → median
 
-# ------------------- Correlation -------------------
-correlation_matrix = data.corr()
-plt.figure(figsize=(25, 25))
-sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm")
-plt.title("Correlation Heatmap")
+# Drop duplicates
+df.drop_duplicates(inplace=True)
+
+# Convert categorical columns to numeric (if any)
+categorical_cols = df.select_dtypes(include='object').columns
+df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+
+# =========================
+# 4. Correlation & feature selection
+# =========================
+corr = df.corr(method='pearson')
+plt.figure(figsize=(10,8))
+sns.heatmap(corr, annot=True, cmap='coolwarm')
+plt.title("Pearson Correlation Heatmap")
 plt.show()
-print("Correlation Table:\n", correlation_matrix)
 
-# Histogram plots → check data spread
-data.hist(figsize=(12, 12))
-plt.tight_layout()
-plt.show()
+# Select features with some correlation threshold with target
+threshold = 0.1
+selected_features = corr['Label'][abs(corr['Label']) > threshold].index.tolist()
+selected_features.remove('Label')
+print("\nSelected features:", selected_features)
 
-# Scaling is required for KNN since different attributes have varying ranges
-features = data.drop("Level", axis=1)
-target = data["Level"]
+# =========================
+# 5. Feature scaling
+# =========================
+X = df[selected_features]
+y = df['Label']
 
 scaler = StandardScaler()
-features_scaled = scaler.fit_transform(features)
+X_scaled = scaler.fit_transform(X)
 
-# ------------------- Train-Test Splits -------------------
-# Split1 → 80% training, 20% testing
-X_train1, X_test1, y_train1, y_test1 = train_test_split(
-    features_scaled, target, test_size=0.2, random_state=0
+# =========================
+# 6. Split dataset: Train / Test / Validation
+ChatGPT said:
+
+#A validation set is used to tune model hyperparameters and check performance on unseen data 
+#during training, helping prevent overfitting. The test set is kept separate for final 
+#evaluation only.
+# =========================
+# First split: Train 80% / Test 20%
+X_train_full, X_test, y_train_full, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=0, stratify=y
 )
 
-# Split2 → 70% training, 30% validation
-X_train2, X_test2, y_train2, y_test2 = train_test_split(
-    features_scaled, target, test_size=0.3, random_state=0
+# Second split: Train 70% / Validation 30% of training set
+X_train, X_val, y_train, y_val = train_test_split(
+    X_train_full, y_train_full, test_size=0.3, random_state=0, stratify=y_train_full
 )
 
-# Why use a validation set?
-# It allows us to tune model hyperparameters without touching the final test set.
+# =========================
+# 7. KNN with multiple metrics
+# =========================
+metrics = ['euclidean', 'manhattan', 'chebyshev', 'minkowski']
+results = []
 
-# ------------------- KNN with Multiple Metrics -------------------
-distance_metrics = ['euclidean', 'manhattan', 'chebyshev', 'minkowski']
-performance = {}
+for metric in metrics:
+    knn = KNeighborsClassifier(n_neighbors=5, metric=metric)
+    knn.fit(X_train, y_train)
+    
+    y_train_pred = knn.predict(X_train)
+    y_val_pred = knn.predict(X_val)
+    y_test_pred = knn.predict(X_test)
+    
+    train_acc = accuracy_score(y_train, y_train_pred)
+    val_acc = accuracy_score(y_val, y_val_pred)
+    test_acc = accuracy_score(y_test, y_test_pred)
+    
+    results.append([metric, train_acc, val_acc, test_acc])
 
-# Using k=15 as example
-for dist in distance_metrics:
-    model = KNeighborsClassifier(n_neighbors=15, metric=dist)
-    model.fit(X_train1, y_train1)
+# =========================
+# 8. Display results
+# =========================
+results_df = pd.DataFrame(results, columns=['Metric', 'Train Accuracy', 'Validation Accuracy', 'Test Accuracy'])
+print("\nKNN Accuracy Comparison:")
+print(results_df)
 
-    preds1 = model.predict(X_test1)
-    preds2 = model.predict(X_test2)
+# Optional: Confusion matrix for the best metric
+best_metric = results_df.loc[results_df['Test Accuracy'].idxmax(), 'Metric']
+print("\nBest metric based on test accuracy:", best_metric)
 
-    acc1 = accuracy_score(y_test1, preds1)
-    acc2 = accuracy_score(y_test2, preds2)
+knn_best = KNeighborsClassifier(n_neighbors=5, metric=best_metric)
+knn_best.fit(X_train, y_train)
+y_test_pred_best = knn_best.predict(X_test)
+cm = confusion_matrix(y_test, y_test_pred_best)
+print("\nConfusion Matrix on Test set (best metric):")
+print(cm)
 
-    performance[dist] = {
-        'accuracy_split1': acc1,
-        'accuracy_split2': acc2
-    }
-
-# Show results
-print("\nAccuracy results across different distance metrics:")
-performance_df = pd.DataFrame(performance).T
-print(performance_df)
-
-# Observation:
-# Based on results, Manhattan distance often gives slightly better accuracy
-# compared to others, though differences depend on dataset characteristics.
+# =========================
+# 9. Critical Analysis (text output)
+# =========================
+print("""
+Critical Analysis:
+- KNN performance depends on the distance metric used.
+- Euclidean works well for features with similar scales (we used StandardScaler).
+- Manhattan can be more robust to outliers.
+- Chebyshev focuses on the maximum feature difference.
+- Minkowski is a generalization of Euclidean and Manhattan.
+- Training accuracy is often higher than validation/test accuracy.
+- Validation set helps tune hyperparameters without touching test set.
+- Always check metrics to choose the most suitable distance for your dataset.
+""")
